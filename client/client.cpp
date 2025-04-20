@@ -17,18 +17,21 @@ void client::work(UI &intf)
     std::cout << "[INFO] " << method_name << " | Начало работы клиента." << std::endl;
     start();
     connect_to_server();
-    std::chrono::milliseconds duration(10);
+    std::chrono::milliseconds duration(5);
     while (true)
     {
-        std::this_thread::sleep_for(duration);
-        uint32_t data=htonl(generate_random_uint32());
-        send(sock, &data, sizeof(data), 0);
         uint32_t new_interval;
             int bytes_received = recv(sock, &new_interval, sizeof(new_interval), MSG_DONTWAIT);
+            if (bytes_received == 0){
+                break;
+            }
             if (bytes_received > 0) {
                 interval = ntohl(new_interval);
                 std::cout << "New interval: " << interval << "ms\n";
             }
+        std::this_thread::sleep_for(duration);
+        uint32_t data=htonl(generate_random_uint32());
+        send(sock, &data, sizeof(data), 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(interval));
     }
     close_sock();
@@ -37,6 +40,7 @@ void client::work(UI &intf)
 }
 void client::start()
 {
+    signal(SIGPIPE, SIG_IGN);
     std::cout << "[INFO] Начало создания сокета..." << std::endl;
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0)
@@ -135,6 +139,9 @@ void client::close_sock()
 }
 void client::send_data(std::string data)
 {
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
     std::chrono::milliseconds duration(10);
     std::unique_ptr<char[]> temp{new char[data.length() + 1]};
     strcpy(temp.get(), data.c_str());

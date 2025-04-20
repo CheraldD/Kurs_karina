@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <cstdint>
 #include "ui.h"
+#include <csignal>
 class client {
 private:
     timeval timeout{};
@@ -24,7 +25,7 @@ private:
     uint32_t generate_random_uint32();
 
 public:
-    u_int32_t interval;
+    u_int32_t interval=0;
     const char* serv_ip;
     int sock;
     uint port;

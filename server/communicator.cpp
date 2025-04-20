@@ -7,6 +7,7 @@ int communicator::connect_to_cl()
     {
         throw critical_error("Сервер не встал на прослушку");
     }
+    std::cout<<"Сервер слушает..."<<std::endl;
     addr_size = sizeof(clientAddr);
     clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
     if (clientSocket < 0)
@@ -32,18 +33,29 @@ void communicator::work()
     const std::string method_name = "work";
     std::cout << "[INFO] [" << method_name << "] Сервер запущен и ожидает подключения клиентов..." << std::endl;
     start();
-    std::thread output_thr(&communicator::output_thread, this);
-    output_thr.detach();
+
     while (true)
     {
         int result = connect_to_cl();
-
+       // interval=50;
         if (result == 0)
         {
-            std::cout << "[INFO] [" << method_name << "] Принято новое подключение. Запуск потока обработки клиента." << std::endl;
-            std::thread client_thread(&communicator::handle_client, this);
-            client_thread.detach();
+            std::cout << "[INFO] [" << method_name << "] Принято новое подключение. Запуск потоков клиента." << std::endl;
 
+            overflowed.store(false);
+            output_done = false;
+            {
+                std::lock_guard<std::mutex> lg(buffer_mutex);
+                while (!buffer_byte.empty()) buffer_byte.pop();
+            }
+
+            std::thread client_thread(&communicator::handle_client, this);
+            std::thread output_thr(&communicator::output_thread, this);
+
+            client_thread.join();
+            output_thr.join();
+
+            std::cout << "[INFO] [" << method_name << "] Потоки клиента завершены. Ожидание нового подключения..." << std::endl;
         }
         else
         {
@@ -51,47 +63,84 @@ void communicator::work()
         }
     }
 }
+void communicator::handle_client() {
+    interval = 300;
+    session_start = std::chrono::steady_clock::now(); 
+    send_interval(interval);
+    while (true) {
+        uint32_t net_data;
+        int bytes = recv(clientSocket, &net_data, sizeof(net_data), 0);
+        if (bytes <= 0) {
+            return;
+        }
+
+        uint32_t data = ntohl(net_data);
+        {
+            std::lock_guard<std::mutex> lg(buffer_mutex);
+
+            if (overflowed.load()) {
+                interval *= 2;
+                send_interval(interval);
+                continue;  // уже переполнено, ничего не делаем
+            }
+
+            if (buffer_byte.size() >= buff_size) {
+                // сразу фиксируем факт переполнения — и больше ничего не пускаем
+                overflowed.store(true);
+                interval *= 2;
+                send_interval(interval);
+                continue;
+            }
+
+            buffer_byte.push(data);
+            //std::cout << "[DEBUG] pushed: " << std::hex << data<< ", size after push: " << buffer_byte.size()<< std::endl;
+            buffer_cv.notify_one();
+        }
+    }
+}
+
+
+void communicator::output_thread() {
+    std::unique_lock<std::mutex> lk(buffer_mutex);
+
+    while (true) {
+        buffer_cv.wait(lk, [this] {
+            return !buffer_byte.empty() || (overflowed.load() && buffer_byte.empty());
+        });
+
+        if (!buffer_byte.empty()) {
+            uint32_t data = buffer_byte.front();
+            buffer_byte.pop();
+            //std::cout << "[DEBUG] popped: " << std::hex << data<< ", size after pop: " << buffer_byte.size()<< std::endl;
+
+            lk.unlock();
+
+            random_delay(seed);
+            std::cout << "Received: 0x"
+                      << std::hex << std::setw(8)
+                      << std::setfill('0') << data << "\n";
+
+            lk.lock();
+        }
+
+        // здесь проверка завершения — после всех действий
+        if (overflowed.load() && buffer_byte.empty()) {
+            auto session_end = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(session_end - session_start).count();
+            std::cout << "[INFO] [output_thread] Буфер опустошён после переполнения. Завершаем..." << std::endl;
+            std::cout << "[INFO] [session] Длительность сессии клиента: " << duration << " сек.\n";
+            lk.unlock();
+            close_sock();
+            return;
+        }
+    }
+}
+
+
 void communicator::random_delay(int seed) {
     static std::mt19937 gen(seed);
     std::uniform_int_distribution<> dist(min_delay_ms, max_delay_ms);
     std::this_thread::sleep_for(std::chrono::milliseconds(dist(gen)));
-}
-void communicator::handle_client(){
-    auto start_time = std::chrono::system_clock::now();
-    send_interval(interval);
-        while (true) {
-            uint32_t data;
-            int bytes_received = recv(clientSocket, &data, sizeof(data), 0);
-            if (bytes_received <= 0) break;
-            data=ntohl(data);
-            {
-                std::lock_guard<std::mutex> lock(buffer_mutex);
-                if (buffer_byte.size() < buff_size) {
-                    buffer_byte.push(data);
-                } else {
-                    interval *= 2;
-                    send_interval(interval);
-                }
-            }
-        }
-    auto end_time = std::chrono::system_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
-    close_sock();
-}
-void communicator::output_thread(){
-    while (true) {
-        if (!buffer_byte.empty()) {
-            uint32_t data;
-            {
-                std::lock_guard<std::mutex> lock(buffer_mutex);
-                data = buffer_byte.front();
-                buffer_byte.pop();
-            }
-            std::cout << "Received: 0x" 
-                      << std::hex << std::setw(8) << std::setfill('0') << data<<std::endl;
-        }
-        random_delay(seed);
-    }
 }
 void communicator::start()
 {
@@ -116,7 +165,7 @@ void communicator::start()
 std::string communicator::recv_data(std::string messg)
 {
     const std::string method_name = "recv_data";
-    timeout.tv_sec = 100;
+    timeout.tv_sec = 10;
     timeout.tv_usec = 0;
     setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
 
@@ -174,20 +223,31 @@ void communicator::send_data(std::string data, std::string msg)
     }
     std::cout << "[INFO] [" << method_name << "] Данные успешно отправлены клиенту (ID: " << clientSocket << ")" << std::endl;
 }
-void communicator::send_interval(uint32_t serv_interval) {
-    uint32_t net_interval = htonl(serv_interval);
-    std::string data(reinterpret_cast<char*>(&net_interval), sizeof(net_interval));
-    send_data(data, "interval update");
+void communicator::send_interval(uint32_t interval) {
+    // Конвертируем в сетевой порядок байт
+    uint32_t net_interval = htonl(interval);
+    
+    // Отправляем как бинарные данные
+    int result = send(clientSocket, &net_interval, sizeof(net_interval), MSG_NOSIGNAL);
+    
+    if (result == -1) {
+        std::cerr << "Failed to send interval: " << strerror(errno) << std::endl;
+        return;
+    }
+    
+    // Для отладки (можно убрать в релизе)
+    //std::cout << "Sent interval update: 0x" << std::hex << std::setw(8) << std::setfill('0') << interval<< " (" << std::dec << interval << " ms)" << std::endl;
 }
 
 void communicator::close_sock()
 {
     const std::string method_name = "close_sock";
-    std::cout << "[INFO] [" << method_name << "] Разорвано соединение с клиентом (ID: " << ")" << std::endl;
+    std::cout << "[INFO] [" << method_name << "] Разорвано соединение с клиентом (ID: "<<clientSocket << ")" << std::endl;
     close(clientSocket);
     std::time_t now = std::time(nullptr);
     char timestamp[100];
     std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    interval=50;
 }
 std::string communicator::hash_gen(std::string &password)
 {

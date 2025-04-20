@@ -25,10 +25,16 @@
 #include <cryptopp/osrng.h>
 #include <queue>
 #include <iomanip>
+#include <atomic>
+#include <condition_variable>
 class communicator
 {    
 private:
-    std::mutex buffer_mutex;    
+    std::chrono::steady_clock::time_point session_start;
+    std::atomic<bool> overflowed{false};
+    std::condition_variable buffer_cv;
+    std::mutex buffer_mutex;
+    bool output_done = false;   
     struct sockaddr_in serverAddr, clientAddr;
     socklen_t addr_size;
     size_t buflen = 1024;
@@ -36,7 +42,7 @@ private:
     uint p;
     uint seed;
     uint buff_size;
-    uint32_t interval=50;
+    uint32_t interval;
     int client_port;
     int min_delay_ms = 100;
     int max_delay_ms = 1000;
