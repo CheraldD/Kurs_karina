@@ -14,6 +14,7 @@
 #include <cstdint>
 #include "ui.h"
 #include <csignal>
+#include "show_error.h"
 class client {
 private:
     timeval timeout{};

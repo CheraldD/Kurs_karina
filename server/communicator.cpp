@@ -1,105 +1,164 @@
 #include "communicator.h"
 
+#define RESET   "\033[0m"
+#define RED     "\033[31m"
+#define GREEN   "\033[32m"
+#define YELLOW  "\033[33m"
+#define CYAN    "\033[36m"
+#define BOLD    "\033[1m"
+
+// Устанавливает соединение с клиентом и инициализирует параметры
 int communicator::connect_to_cl()
 {
-    std::string method_name="connect_to_cl";
+    std::string method_name = "connect_to_cl";
+
+    // Перевод сокета в режим прослушивания
     if (listen(serverSocket, 10) != 0)
     {
-        throw critical_error("Сервер не встал на прослушку");
+        throw critical_error(RED + method_name + " | Сервер не встал на прослушку" + RESET);
     }
-    std::cout<<"Сервер слушает..."<<std::endl;
+
+    std::cout << GREEN << "[INFO] [" << method_name << "] Сервер слушает входящие соединения..." << RESET << std::endl;
+
+    // Принятие подключения от клиента
     addr_size = sizeof(clientAddr);
     clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddr, &addr_size);
+
     if (clientSocket < 0)
     {
-        std::cerr << "[ERROR] [" << "] Ошибка при принятии соединения!" << std::endl;
-        return -1;
+        throw critical_error(RED + method_name + " | Ошибка при принятии соединения" + RESET);
     }
+
+    // Получение ID клиента
     client_id = recv_data(method_name + " | Ошибка при приеме ID клиента");
+    if (client_id.empty()) {
+        throw critical_error(RED + method_name + " | ID клиента не был получен" + RESET);
+    }
+
+    // Получение IP-адреса клиента
     char cl_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(clientAddr.sin_addr), cl_ip, INET_ADDRSTRLEN);
-    client_ip=std::string(cl_ip);
+    if (!inet_ntop(AF_INET, &(clientAddr.sin_addr), cl_ip, INET_ADDRSTRLEN)) {
+        throw critical_error(RED + method_name + " | Не удалось получить IP клиента" + RESET);
+    }
+    client_ip = std::string(cl_ip);
     client_port = ntohs(clientAddr.sin_port);
+
+    // Вывод информации о подключённом клиенте
+    std::cout << CYAN << "[INFO] [" << method_name << "] Подключён новый клиент:" << RESET << std::endl;
+    std::cout << "    → IP: " << client_ip
+              << "\n    → Порт: " << client_port
+              << "\n    → ID: " << client_id << std::endl;
+
     return 0;
 }
+
+// Приём данных от клиента с обработкой ошибок
+std::string communicator::recv_data(std::string error_message) {
+    char buffer[256];
+    int bytes_received = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+
+    if (bytes_received <= 0) {
+        std::cerr << RED << "[ERROR] " << error_message << RESET << std::endl;
+        return "";
+    }
+
+    buffer[bytes_received] = '\0';
+    return std::string(buffer);
+}
+
+// Конструктор: инициализация параметров порта, seed и размера буфера
 communicator::communicator(uint port,uint s,uint b)
 {
     p = port;
     seed=s;
     buff_size=b;
 }
+
+// Главный цикл работы сервера: запуск, обработка подключений
 void communicator::work()
 {
     const std::string method_name = "work";
-    std::cout << "[INFO] [" << method_name << "] Сервер запущен и ожидает подключения клиентов..." << std::endl;
-    start();
+    std::cout << GREEN << "[INFO] [" << method_name << "] Сервер запущен и ожидает подключения клиентов..." << RESET << std::endl;
+
+    try {
+        start(); // Инициализация сокета
+    } catch (const critical_error& e) {
+        std::cerr << RED << "[FATAL] [" << method_name << "] " << e.what() << RESET << std::endl;
+        return;
+    }
 
     while (true)
     {
-        int result = connect_to_cl();
-       // interval=50;
-        if (result == 0)
-        {
-            std::cout << "[INFO] [" << method_name << "] Принято новое подключение. Запуск потоков клиента." << std::endl;
-
-            overflowed.store(false);
-            output_done = false;
+        try {
+            int result = connect_to_cl(); // Ожидание подключения
+            if (result == 0)
             {
-                std::lock_guard<std::mutex> lg(buffer_mutex);
-                while (!buffer_byte.empty()) buffer_byte.pop();
+                std::cout << GREEN << "[INFO] [" << method_name << "] Принято новое подключение. Запуск потоков клиента." << RESET << std::endl;
+
+                // Подготовка буфера и флагов
+                overflowed.store(false);
+                output_done = false;
+
+                {
+                    std::lock_guard<std::mutex> lg(buffer_mutex);
+                    while (!buffer_byte.empty()) buffer_byte.pop();
+                }
+
+                // Запуск потоков обработки и вывода данных
+                std::thread client_thread(&communicator::handle_client, this);
+                std::thread output_thr(&communicator::output_thread, this);
+
+                client_thread.join();
+                output_thr.join();
+
+                std::cout << GREEN << "[INFO] [" << method_name << "] Потоки клиента завершены. Ожидание нового подключения..." << RESET << std::endl;
             }
-
-            std::thread client_thread(&communicator::handle_client, this);
-            std::thread output_thr(&communicator::output_thread, this);
-
-            client_thread.join();
-            output_thr.join();
-
-            std::cout << "[INFO] [" << method_name << "] Потоки клиента завершены. Ожидание нового подключения..." << std::endl;
         }
-        else
-        {
-            std::cerr << "[ERROR] [" << method_name << "] Ошибка подключения клиента, продолжаем ожидание..." << std::endl;
+        catch (const critical_error& e) {
+            std::cerr << RED << "[ERROR] [" << method_name << "] " << e.what() << "\nПродолжаем ожидание новых клиентов..." << RESET << std::endl;
+            continue;
         }
     }
 }
+
+// Поток приёма данных от клиента, с контролем переполнения буфера
 void communicator::handle_client() {
-    interval = 300;
+    interval = 50;
     session_start = std::chrono::steady_clock::now(); 
-    send_interval(interval);
+    send_interval(interval); // Отправка интервала клиенту
+
     while (true) {
         uint32_t net_data;
         int bytes = recv(clientSocket, &net_data, sizeof(net_data), 0);
         if (bytes <= 0) {
-            return;
+            return; // Завершение при разрыве соединения
         }
 
-        uint32_t data = ntohl(net_data);
+        uint32_t data = ntohl(net_data); // Преобразование в хост-байт порядок
+
         {
             std::lock_guard<std::mutex> lg(buffer_mutex);
 
             if (overflowed.load()) {
                 interval *= 2;
                 send_interval(interval);
-                continue;  // уже переполнено, ничего не делаем
+                continue;
             }
 
             if (buffer_byte.size() >= buff_size) {
-                // сразу фиксируем факт переполнения — и больше ничего не пускаем
                 overflowed.store(true);
                 interval *= 2;
                 send_interval(interval);
                 continue;
             }
 
-            buffer_byte.push(data);
-            //std::cout << "[DEBUG] pushed: " << std::hex << data<< ", size after push: " << buffer_byte.size()<< std::endl;
+            buffer_byte.push(data); // Сохраняем в буфер
             buffer_cv.notify_one();
         }
     }
 }
 
-
+// Поток вывода данных из буфера с задержкой
 void communicator::output_thread() {
     std::unique_lock<std::mutex> lk(buffer_mutex);
 
@@ -111,24 +170,24 @@ void communicator::output_thread() {
         if (!buffer_byte.empty()) {
             uint32_t data = buffer_byte.front();
             buffer_byte.pop();
-            //std::cout << "[DEBUG] popped: " << std::hex << data<< ", size after pop: " << buffer_byte.size()<< std::endl;
 
             lk.unlock();
 
-            random_delay(seed);
-            std::cout << "Received: 0x"
+            random_delay(seed); // Искусственная задержка вывода
+            std::cout << CYAN << "[RECV] Получено значение: 0x"
                       << std::hex << std::setw(8)
-                      << std::setfill('0') << data << "\n";
+                      << std::setfill('0') << data
+                      << " (" << std::dec << data << ")" << RESET << std::endl;
 
             lk.lock();
         }
 
-        // здесь проверка завершения — после всех действий
+        // Если переполнение произошло и буфер опустел — завершаем
         if (overflowed.load() && buffer_byte.empty()) {
             auto session_end = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(session_end - session_start).count();
-            std::cout << "[INFO] [output_thread] Буфер опустошён после переполнения. Завершаем..." << std::endl;
-            std::cout << "[INFO] [session] Длительность сессии клиента: " << duration << " сек.\n";
+            std::cout << YELLOW << "[INFO] [output_thread] Буфер опустошён после переполнения. Завершаем..." << RESET << std::endl;
+            std::cout << YELLOW << "[INFO] [session] Длительность сессии клиента: " << duration << " сек." << RESET << std::endl;
             lk.unlock();
             close_sock();
             return;
@@ -136,135 +195,59 @@ void communicator::output_thread() {
     }
 }
 
-
+// Задержка перед выводом, с использованием генератора случайных чисел
 void communicator::random_delay(int seed) {
     static std::mt19937 gen(seed);
     std::uniform_int_distribution<> dist(min_delay_ms, max_delay_ms);
     std::this_thread::sleep_for(std::chrono::milliseconds(dist(gen)));
 }
+
+// Инициализация и привязка сокета
 void communicator::start()
 {
     const std::string method_name = "start";
+
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket < 0)
     {
-        std::cerr << "[ERROR] [" << method_name << "] Ошибка при создании сокета" << std::endl;
-        throw critical_error("Сокет не был создан");
+        throw critical_error(std::string(RED) + "[" + method_name + "] Сокет не был создан" + RESET);
     }
-    std::cout << "[INFO] [" << method_name << "] Сокет создан" << std::endl;
+
+    std::cout << GREEN << "[INFO] [" << method_name << "] Сокет успешно создан" << RESET << std::endl;
+
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(p);          
+    serverAddr.sin_port = htons(p);
     serverAddr.sin_addr.s_addr = INADDR_ANY;
+
     if (bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
     {
-        std::cerr << "[ERROR] [" << method_name << "] Ошибка при привязке сокета" << std::endl;
-        throw critical_error("Сокет не был привязан");
-    }
-    std::cout << "[INFO] [" << method_name << "] Сокет привязан" << std::endl;
-}
-std::string communicator::recv_data(std::string messg)
-{
-    const std::string method_name = "recv_data";
-    timeout.tv_sec = 10;
-    timeout.tv_usec = 0;
-    setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
-
-    int rc = 0;
-    size_t peek_buflen = buflen;
-    std::vector<char> temp_buffer(peek_buflen);
-    std::cout << "[INFO] [" << method_name << "] Начало приема данных от клиента (ID: " << clientSocket << ")" << std::endl;
-    while (true)
-    {
-        rc = recv(clientSocket, temp_buffer.data(), peek_buflen, MSG_PEEK);
-        if (rc == 0)
-        {
-            close_sock();
-            std::cerr << "[ERROR] [" << method_name << "] Клиент закрыл соединение (ID: " << clientSocket << ")" << std::endl;
-            return "";
-        }
-        else if (rc < 0)
-        {
-            close_sock();
-            std::cerr << "[ERROR] [" << method_name << "] " << messg << std::endl;
-            return "";
-        }
-
-        if (static_cast<size_t>(rc) < peek_buflen)
-            break;
-        peek_buflen *= 2;
-        temp_buffer.resize(peek_buflen);
+        throw critical_error(std::string(RED) + "[" + method_name + "] Ошибка при привязке сокета" + RESET);
     }
 
-    std::string msg(temp_buffer.data(), rc);
-    if (recv(clientSocket, nullptr, rc, MSG_TRUNC) <= 0)
-    {
-        close_sock();
-        std::cerr << "[ERROR] [" << method_name << "] " << messg << std::endl;
-        return "";
-    }
-    std::cout << "[INFO] [" << method_name << "] Строка принята от клиента (ID: " << clientSocket << "): " << msg << std::endl;
-    return msg;
+    std::cout << GREEN << "[INFO] [" << method_name << "] Сокет привязан к порту " << p << RESET << std::endl;
 }
-void communicator::send_data(std::string data, std::string msg)
-{
-    const std::string method_name = "send_data";
-    std::cout << "[INFO] [" << method_name << "] Начало отправки данных клиенту (ID: " << clientSocket << ")" << std::endl;
-    std::chrono::milliseconds duration(10);
-    std::unique_ptr<char[]> temp{new char[data.length() + 1]};
-    strcpy(temp.get(), data.c_str());
-    buffer = std::move(temp);
-    std::this_thread::sleep_for(duration);
-    int sb = send(clientSocket, buffer.get(), data.length(), 0);
-    if (sb <= 0)
-    {
-        std::cerr << "[ERROR] [" << method_name << "] Ошибка отправки данных клиенту (ID: " << clientSocket << ")" << std::endl;
-        close_sock();
-        return;
-    }
-    std::cout << "[INFO] [" << method_name << "] Данные успешно отправлены клиенту (ID: " << clientSocket << ")" << std::endl;
-}
+
+// Отправка текущего интервала задержки клиенту
 void communicator::send_interval(uint32_t interval) {
-    // Конвертируем в сетевой порядок байт
     uint32_t net_interval = htonl(interval);
-    
-    // Отправляем как бинарные данные
     int result = send(clientSocket, &net_interval, sizeof(net_interval), MSG_NOSIGNAL);
-    
+
     if (result == -1) {
-        std::cerr << "Failed to send interval: " << strerror(errno) << std::endl;
+        std::cerr << RED << "[ERROR] Failed to send interval: " << strerror(errno) << RESET << std::endl;
         return;
     }
-    
-    // Для отладки (можно убрать в релизе)
-    //std::cout << "Sent interval update: 0x" << std::hex << std::setw(8) << std::setfill('0') << interval<< " (" << std::dec << interval << " ms)" << std::endl;
+
+    std::cout << GREEN << "[INFO] [send_interval] Отправлен интервал клиенту: 0x"
+              << std::hex << std::setw(8) << std::setfill('0') << interval
+              << " (" << std::dec << interval << " мс)" << RESET << std::endl;
 }
 
+// Закрытие соединения с клиентом
 void communicator::close_sock()
 {
     const std::string method_name = "close_sock";
-    std::cout << "[INFO] [" << method_name << "] Разорвано соединение с клиентом (ID: "<<clientSocket << ")" << std::endl;
+    std::cout << YELLOW << "[INFO] [" << method_name << "] Соединение с клиентом (ID: "
+              << client_id << ", сокет: " << clientSocket << ") разорвано." << RESET << std::endl;
     close(clientSocket);
-    std::time_t now = std::time(nullptr);
-    char timestamp[100];
-    std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-    interval=50;
-}
-std::string communicator::hash_gen(std::string &password)
-{
-    // Создаем объект для алгоритма хэширования SHA256
-    CryptoPP::SHA256 hash;
-    std::string hashed_password;
-
-    // Применяем хэширование:
-    // StringSource - источник данных (строка с паролем), передаем его в хэш-фильтр
-    // HashFilter - фильтрует и хэширует данные через алгоритм SHA256
-    // HexEncoder - кодирует результат хэширования в строку в формате шестнадцатеричных символов
-    // StringSink - принимает результат в виде строки
-    CryptoPP::StringSource(password, true,
-                           new CryptoPP::HashFilter(hash,
-                                                    new CryptoPP::HexEncoder(
-                                                        new CryptoPP::StringSink(hashed_password))));
-
-    // Возвращаем хэшированную строку пароля
-    return hashed_password;
+    interval = 50;
 }
