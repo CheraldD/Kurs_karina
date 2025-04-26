@@ -4,7 +4,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include "communicator.h"
+#include "server.h"
 #include "error.h"
 
 namespace po = boost::program_options;

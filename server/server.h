@@ -27,7 +27,7 @@
 #include <iomanip>
 #include <atomic>
 #include <condition_variable>
-class communicator
+class server
 {    
 private:
     std::chrono::steady_clock::time_point session_start;
@@ -53,16 +53,15 @@ public:
     int serverSocket,clientSocket;
     std::string cl_id, log_location;
     timeval timeout{};
-    communicator(uint port,uint s,uint b);
-    int connect_to_cl();
-    void send_data(std::string data, std::string msg);
-    void send_interval(uint32_t serv_interval);
-    std::string recv_data(std::string messg);
-    void close_sock(); 
-    void work();
-    void start();
+    server(uint port,uint s,uint b);
+    int connection();
+    void data_send(std::string data, std::string msg);
+    void update_interval(uint32_t serv_interval);
+    std::string recieve(std::string messg);
+    void close_socket(); 
+    void run();
+    void steady();
     void random_delay(int seed);
-    void handle_client();
+    void work_with_client();
     void output_thread();
-    std::string hash_gen(std::string &password);
 };

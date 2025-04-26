@@ -32,10 +32,10 @@ public:
     uint port;
     std::string id;
 
-    void connect_to_server();
-    void send_data(std::string data);
-    std::string recv_data();
-    void close_sock();
-    void start();
-    void work(UI &intf);
+    void connection();
+    void transfer_data(std::string data);
+    std::string recieve();
+    void close_socket();
+    void steady();
+    void run(UI &intf);
 };
