@@ -1,8 +1,6 @@
 .PHONY: all doxy clean
 CXX = g++
-CXXFLAGS = -Wall -lboost_program_options -lcrypto++ -lboost_filesystem -fPIC
-QT_CFLAGS = $(shell pkg-config --cflags Qt5Core Qt5Sql)
-QT_LIBS = $(shell pkg-config --libs Qt5Core Qt5Sql)
+CXXFLAGS = -Wall -lboost_program_options -lcrypto++ -lboost_filesystem -fPIC -fsanitize=address
 TARGET = server
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(SOURCES:%.cpp=%.o)
@@ -14,10 +12,10 @@ doxy:
 	doxygen
 
 $(TARGET): $(OBJECTS)
-	$(CXX) $(OBJECTS) $(CXXFLAGS) $(QT_LIBS) -o $(TARGET)
+	$(CXX) $(OBJECTS) $(CXXFLAGS)  -o $(TARGET)
 
 %.o: %.cpp $(DEPS)
-	$(CXX) $(CXXFLAGS) $(QT_CFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
 	rm -f $(OBJECTS) $(TARGET)

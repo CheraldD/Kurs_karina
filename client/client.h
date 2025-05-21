@@ -14,7 +14,8 @@
 #include <cstdint>
 #include "ui.h"
 #include <csignal>
-#include "show_error.h"
+#include "error.h"
+#include <atomic>
 class client {
 private:
     timeval timeout{};
@@ -31,10 +32,9 @@ public:
     int sock;
     uint port;
     std::string id;
-
-    void connection();
-    void transfer_data(std::string data);
     std::string recieve();
+    void connection();
+    void transfer_data(const std::string &header, const std::string &data);
     void close_socket();
     void steady();
     void run(UI &intf);

@@ -40,7 +40,7 @@ private:
     size_t buflen = 1024;
     std::unique_ptr<char[]> buffer{new char[buflen]};
     uint p;
-    uint seed;
+    int seed;
     uint buff_size;
     uint32_t interval;
     int client_port;
@@ -53,10 +53,11 @@ public:
     int serverSocket,clientSocket;
     std::string cl_id, log_location;
     timeval timeout{};
-    server(uint port,uint s,uint b);
+    server(uint port,int s,uint b);
     int connection();
-    void data_send(std::string data, std::string msg);
+    void transfer_data(const std::string &header, const std::string &data);
     void update_interval(uint32_t serv_interval);
+    void update_interval(std::string hollow);
     std::string recieve(std::string messg);
     void close_socket(); 
     void run();

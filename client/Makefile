@@ -1,6 +1,6 @@
 .PHONY: all doxy clean
 CXX = g++
-CXXFLAGS = -Wall -lboost_program_options -lcrypto++ -lboost_filesystem
+CXXFLAGS = -Wall -lboost_program_options -lcrypto++ -lboost_filesystem -fsanitize=address
 TARGET = client
 SOURCES = $(wildcard *.cpp)
 OBJECTS = $(SOURCES:%.cpp=%.o)

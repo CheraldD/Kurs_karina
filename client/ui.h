@@ -5,12 +5,10 @@
 #include <string>
 #include <vector>
 #include <arpa/inet.h>
-#include "show_error.h"
 namespace po = boost::program_options;
 
 class UI {
 public:
-    show_error debugger;
     po::options_description desc;
     po::variables_map vm;
 
