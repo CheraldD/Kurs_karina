@@ -63,8 +63,8 @@ void client::run(UI &intf)
 {
     const std::string method = "client::run";
 
-    std::string ip = intf.get_serv_ip(); // сохраняем строку
-    serv_ip = ip.c_str();                // используем её данные
+    std::string ip = intf.get_serv_ip();
+    serv_ip = ip.c_str();
     port = intf.get_port();
     id = intf.get_username();
 
@@ -73,30 +73,11 @@ void client::run(UI &intf)
     std::string rcv = recieve();
     interval = stoul(rcv);
 
-    std::atomic<bool> running{true};       // флаг завершения
-    std::mutex interval_mutex;             // защита доступа к interval
-
-    // Поток обновления интервала
-    std::thread interval_thread([this, &running, &interval_mutex, method]() {
-        while (running)
-        {
-            std::this_thread::sleep_for(std::chrono::seconds(1)); // опрашиваем раз в секунду
-            std::string temp = recieve(); // ожидание может блокировать
-            if (temp != "OK")
-            {
-                std::lock_guard<std::mutex> lock(interval_mutex);
-                interval = stoul(temp);
-                logMessage(LogLevel::INFO, method, "Обновлённый интервал: " + std::to_string(interval) + " мс");
-            }
-        }
-    });
-
     std::chrono::milliseconds tick(5);
-    while (true) // или ваш критерий выхода
+    while (true) // критерий выхода добавить при необходимости
     {
-        logMessage(LogLevel::INFO, method, "Текущий интервал: " + std::to_string(interval) + " мс");
-        std::this_thread::sleep_for(tick);
 
+        // Генерация и отправка числа
         uint32_t rnd = generate_random_uint32();
         transfer_data("SEND_DATA", std::to_string(rnd));
 
@@ -104,22 +85,28 @@ void client::run(UI &intf)
         oss << "0x" << std::hex << rnd;
         logMessage(LogLevel::SEND, method, "Отправлено число: " + oss.str());
 
-        uint32_t current_interval;
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval));
+        logMessage(LogLevel::INFO, method, "Текущий интервал: " + std::to_string(interval) + " мс");
+        std::this_thread::sleep_for(tick);
+
+        // Пытаемся получить новое значение интервала (в пределах 100 мс)
+        std::string response = recieve(); // recieve(false): не логировать ошибку при таймауте
+        if (!response.empty() && response != "OK")
         {
-            std::lock_guard<std::mutex> lock(interval_mutex);
-            current_interval = interval;
+            try {
+                interval = std::stoul(response);
+                logMessage(LogLevel::INFO, method, "Интервал обновлён: " + std::to_string(interval) + " мс");
+            } catch (...) {
+                logMessage(LogLevel::ERROR, method, "Некорректный ответ сервера: " + response);
+            }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(current_interval));
     }
 
-    // Завершение (недостижимо в текущем виде, но показано для полноты)
-    running = false;
-    if (interval_thread.joinable())
-        interval_thread.join();
-
+    // Завершение (сюда можно вставить проверку условия остановки)
     close_socket();
     logMessage(LogLevel::INFO, method, "Клиент завершил работу");
 }
+
 
 // Создание TCP-сокета и настройка структуры адреса сервера
 void client::steady()
@@ -143,13 +130,18 @@ void client::steady()
 
 void client::transfer_data(const std::string &header, const std::string &data)
 {
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
     const std::string method = "transfer_data";
     ApplicationProtocol msg(header, id, ApplicationProtocol::generateID(), data);
     std::string packet = msg.pack();
-    ssize_t sent = send(sock, packet.c_str(), packet.size(), MSG_NOSIGNAL);
-    if (sent == -1)
+    ssize_t sent = send(sock, packet.c_str(), packet.size(), 0);
+    if (sent <=0)
     {
         logMessage(LogLevel::ERROR, method, "Ошибка send: " + std::string(strerror(errno)));
+        close_socket();
+        exit(1);
     }
     else
     {
@@ -159,29 +151,34 @@ void client::transfer_data(const std::string &header, const std::string &data)
 
 std::string client::recieve()
 {
-        static std::string buffer;    // накапливаем “хвосты”
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
     const std::string method = "recieve";
+
     char tmp[4096];
-    int len = recv(sock, tmp, sizeof(tmp)-1, 0);
-    if (len <= 0) {
-        logMessage(LogLevel::ERROR, method, "Ошибка приема; код ошибки " + std::to_string(errno));
+    int len = recv(sock, tmp, sizeof(tmp) - 1, 0);
+    if (len == 0) {
+        logMessage(LogLevel::INFO, method, "Сервер закрыл соединение");
         return "";
     }
-    tmp[len] = '\0';
-    buffer += tmp;              // добавили во временный буфер
-    logMessage(LogLevel::RECV, method, std::string(tmp));
-
-    // ищем первую завершённую строку
-    auto pos = buffer.find('\n');
-    if (pos == std::string::npos) {
-        // ещё нет полного сообщения — ждём дальше
-        return "";  
+    if (len < 0) {
+        logMessage(LogLevel::ERROR, method, "Ошибка приема; код ошибки " + std::to_string(errno));
+        close_socket();
+        return "";
     }
 
-    // вычленяем одну строку + обрезаем из буфера
-    std::string line = buffer.substr(0, pos);
-    buffer.erase(0, pos + 1);
+    tmp[len] = '\0';
+    recv_buffer += tmp;  // теперь это поле класса
+    logMessage(LogLevel::RECV, method, tmp);
 
+    auto pos = recv_buffer.find('\n');
+    if (pos == std::string::npos) {
+        return "";
+    }
+
+    std::string line = recv_buffer.substr(0, pos);
+    recv_buffer.erase(0, pos + 1);
     auto proto = ApplicationProtocol::unpack(line);
     return proto.data();
 }

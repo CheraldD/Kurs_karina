@@ -27,6 +27,7 @@ private:
     uint32_t generate_random_uint32();
 
 public:
+std::string recv_buffer;
     u_int32_t interval=0;
     const char* serv_ip;
     int sock;

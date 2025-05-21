@@ -34,7 +34,9 @@ private:
     std::atomic<bool> overflowed{false};
     std::condition_variable buffer_cv;
     std::mutex buffer_mutex;
-    bool output_done = false;   
+   // bool output_done = false;   
+   std::atomic<bool> receiving_done{false};
+
     struct sockaddr_in serverAddr, clientAddr;
     socklen_t addr_size;
     size_t buflen = 1024;
@@ -44,11 +46,13 @@ private:
     uint buff_size;
     uint32_t interval;
     int client_port;
-    int min_delay_ms = 100;
-    int max_delay_ms = 1000;
+    int min_delay_ms = 1000;
+    int max_delay_ms = 3000;
     std::string client_ip;
     std::string client_id;
 public:
+std::atomic<bool> output_done{false};
+std::string recv_buffer;
     std::queue<uint32_t> buffer_byte;
     int serverSocket,clientSocket;
     std::string cl_id, log_location;
