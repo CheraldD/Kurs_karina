@@ -63,7 +63,7 @@ void server::transfer_data(const std::string &header, const std::string &data)
         logMessage(LogLevel::INFO, method, "Отправлено: " + packet);
     }
 }
-server::server(uint port, int s, uint b) : p(port), seed(s), buff_size(b) {}
+server::server(uint port, int s, uint b, uint32_t intr, int min, int max) : p(port), seed(s), buff_size(b), interval(intr), min_delay_ms(min), max_delay_ms(max) {}
 // Чтение протокольного сообщения от клиента
 std::string server::recieve(std::string context)
 {
@@ -156,7 +156,7 @@ void server::update_interval(std::string hollow)
 void server::work_with_client()
 {
     const std::string method = "work_with_client";
-    interval = 250;
+
     session_start = std::chrono::steady_clock::now();
     update_interval(interval); // отправить начальный интервал клиенту
 
@@ -251,7 +251,7 @@ void server::output_thread()
             auto dur = std::chrono::duration_cast<std::chrono::seconds>(
                            std::chrono::steady_clock::now() - session_start)
                            .count();
-
+            session_start = std::chrono::steady_clock::now();
             logMessage(LogLevel::INFO, method, "Буфер опустошён, поток завершается");
             logMessage(LogLevel::SESSION, "session", "Продолжительность: " + std::to_string(dur) + " с");
 
@@ -280,6 +280,11 @@ void server::steady()
         throw server_error("Не удалось создать сокет");
     logMessage(LogLevel::INFO, method, "Сокет создан");
 
+    // Позволяем сразу перезапускать сервер на том же порте
+    int opt = 1;
+    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+        logMessage(LogLevel::ERROR, method, "Не удалось установить SO_REUSEADDR");
+
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(p);
     serverAddr.sin_addr.s_addr = INADDR_ANY;
@@ -287,11 +292,12 @@ void server::steady()
         throw server_error("Не удалось привязать сокет");
     logMessage(LogLevel::INFO, method, "Сокет привязан к порту " + std::to_string(p));
 
-    // Слушаем входящие соединения ровно один раз
-    if (listen(serverSocket, 10) != 0)
+    // Слушаем с очередью из SOMAXCONN
+    if (listen(serverSocket, 1) != 0)
         throw server_error("Не удалось начать прослушивание");
     logMessage(LogLevel::INFO, method, "Сервер слушает входящие соединения");
 }
+
 
 // Закрытие клиентского сокета и сброс флагов
 void server::close_socket()
@@ -332,6 +338,9 @@ void server::run()
     {
         try
         {
+            overflowed.store(false);
+            receiving_done.store(false);
+            output_done.store(false);
             if (connection() == 0)
             {
                 logMessage(LogLevel::INFO, method, "Клиент подключился, запуск потоков");

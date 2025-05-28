@@ -46,8 +46,8 @@ private:
     uint buff_size;
     uint32_t interval;
     int client_port;
-    int min_delay_ms = 1000;
-    int max_delay_ms = 3000;
+    int min_delay_ms;
+    int max_delay_ms;
     std::string client_ip;
     std::string client_id;
 public:
@@ -57,7 +57,7 @@ std::string recv_buffer;
     int serverSocket,clientSocket;
     std::string cl_id, log_location;
     timeval timeout{};
-    server(uint port,int s,uint b);
+    server(uint port, int s, uint b, uint32_t intr, int min, int max);
     int connection();
     void transfer_data(const std::string &header, const std::string &data);
     void update_interval(uint32_t serv_interval);

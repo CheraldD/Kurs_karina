@@ -10,6 +10,9 @@ UI::UI(int argc, char* argv[]) {
         ("help,h", "Показать справку")  
         ("seed,s", po::value<std::vector<int>>()->multitoken(), "Значения seed для генератора")
         ("buff_size,b", po::value<std::vector<uint>>()->multitoken(), "Размер буфера приема")
+        ("interval,i", po::value<std::vector<uint>>()->multitoken(), "Начальный интервал, отправляемый клиенту")
+        ("min,m", po::value<std::vector<int>>()->multitoken(), "Начальное значение интервала задержки вывода из буффера")
+        ("max,M", po::value<std::vector<int>>()->multitoken(), "Конечное значение интервала задержки вывода из буффера")
         ("Port,p", po::value<std::vector<uint>>()->multitoken(), "Порт сервера"); 
 
     try {
@@ -21,8 +24,9 @@ UI::UI(int argc, char* argv[]) {
         }
 
         // Требуем обязательные опции
-        if (!vm.count("Port") || !vm.count("seed") || !vm.count("buff_size")) {
-            throw server_error("Не заданы: --Port, --seed или --buff_size");
+        if (!vm.count("Port") || !vm.count("seed") || !vm.count("buff_size") || !vm.count("interval")|| !vm.count("min")|| !vm.count("max")) {
+            std::cout << desc << std::endl;
+            throw server_error("Не заданы: --Port, --seed или --buff_size или --interval или --min или --max");
         }
         po::notify(vm); // Фиксируем значения
     } catch (po::error& e) {
@@ -42,7 +46,26 @@ uint UI::get_port() {
         throw server_error("Порт вне диапазона 1024-65535");
     return port;
 }
-
+uint UI::get_interval() {
+    auto &intervals = vm["interval"].as<std::vector<uint>>();
+    if (intervals.empty()) throw server_error("--interval пуст");
+    uint interval = intervals.back();
+    return interval;
+}
+int UI::get_max() {
+    auto &maxs = vm["max"].as<std::vector<int>>();
+    if (maxs.empty()) throw server_error("--max пуст");
+    int max = maxs.back();
+    if (max<0) throw ("Значение интервала меньше 0");
+    return max;
+}
+int UI::get_min() {
+    auto &mins = vm["min"].as<std::vector<int>>();
+    if (mins.empty()) throw server_error("--min пуст");
+    int min = mins.back();
+    if (min<0) throw ("Значение интервала меньше 0");
+    return min;
+}
 // Получить размер буфера
 uint UI::get_buff_size() {
     auto &v = vm["buff_size"].as<std::vector<uint>>();

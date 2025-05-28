@@ -21,5 +21,8 @@ public:
     uint get_port();
     std::string get_log_loc();
     uint get_buff_size();
+    uint get_interval();
+    int get_max();
+    int get_min();
     int get_seed();
 };
